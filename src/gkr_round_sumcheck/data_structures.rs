@@ -2,7 +2,7 @@
 
 use crate::ml_sumcheck::protocol::prover::ProverMsg;
 use ark_ff::Field;
-use ark_poly::{DenseMultilinearExtension, Polynomial, SparseMultilinearExtension};
+use ark_poly::{DenseMultilinearExtension, SparseMultilinearExtension, MultilinearExtension};
 use ark_std::vec::Vec;
 
 /// Proof for GKR Round Function
@@ -50,7 +50,7 @@ impl<F: Field> GKRRoundSumcheckSubClaim<F> {
             .chain(self.v.iter())
             .copied()
             .collect();
-        let actual_evaluation = f1.evaluate(&guv) * f2.evaluate(&self.u) * f3.evaluate(&self.v);
+        let actual_evaluation = f1.evaluate(&guv).unwrap() * f2.evaluate(&self.u).unwrap() * f3.evaluate(&self.v).unwrap();
 
         actual_evaluation == self.expected_evaluation
     }

@@ -111,25 +111,42 @@ impl<F: Field> ListOfProductsOfPolynomials<F> {
 
 
 /// Represents a polynomial of the form 
-/// [Σᵢ cᵢ·Pᵢ(1-Pᵢ)] · eq_t(X) · (1 - eq_{1,...,1}(X))
+/// [Σᵢ cᵢ·Pᵢ(1-Pᵢ)] · eq_t(X) · (1 - eq_{1,...,1}(X)) + α · g(X)
+/// where g(X) = g₁(X₁) + ... + gₙ(Xₙ) and each gᵢ is a degree-4 univariate
 pub struct BinaryConstraintPolynomial<F: Field> {
     /// List of (coefficient, polynomial) pairs for the binary constraints
     pub constraints: Vec<(F, DenseMultilinearExtension<F>)>,
     /// The point t for eq_t
     pub eq_point: Vec<F>,
+    /// Coefficient α for the g term
+    pub alpha: F,
+    /// Random univariate polynomials g₁, ..., gₙ
+    /// Each is represented as [r₀, r₁, r₂, r₃, r₄] (coefficients for degree-4 polynomial)
+    pub g_polys: Vec<Vec<F>>,
     /// Number of variables
     pub num_variables: usize,
 }
 
 impl<F: Field> BinaryConstraintPolynomial<F> {
-    /// Create new polynomial with eq_t evaluation point
-    pub fn new(num_variables: usize, eq_point: Vec<F>) -> Self {
+    /// Create new polynomial with eq_t evaluation point and random g polynomials
+    pub fn new(num_variables: usize, eq_point: Vec<F>, alpha: F, g_polys: Vec<Vec<F>>) -> Self {
         if eq_point.len() != num_variables {
             panic!("eq_point must have same dimension as num_variables");
         }
+        if g_polys.len() != num_variables {
+            panic!("Must have one g polynomial per variable");
+        }
+        for (i, g) in g_polys.iter().enumerate() {
+            if g.len() != 5 {
+                panic!("g_poly[{}] must have 5 coefficients (degree 4)", i);
+            }
+        }
+        
         Self {
             constraints: Vec::new(),
             eq_point,
+            alpha,
+            g_polys,
             num_variables,
         }
     }
@@ -142,14 +159,33 @@ impl<F: Field> BinaryConstraintPolynomial<F> {
         self.constraints.push((coefficient, polynomial));
     }
 
+    /// Evaluate gᵢ(x) where gᵢ(X) = r₀ + r₁X + r₂X² + r₃X³ + r₄X⁴
+    fn eval_g_i(&self, var_index: usize, x: F) -> F {
+        let coeffs = &self.g_polys[var_index];
+        let mut result = coeffs[0];
+        let mut x_pow = x;
+        for i in 1..5 {
+            result += coeffs[i] * x_pow;
+            x_pow *= x;
+        }
+        result
+    }
+
+    /// Evaluate g(x) = g₁(x₁) + ... + gₙ(xₙ)
+    fn eval_g(&self, point: &[F]) -> F {
+        let mut sum = F::zero();
+        for i in 0..self.num_variables {
+            sum += self.eval_g_i(i, point[i]);
+        }
+        sum
+    }
+
     /// Evaluate eq_t(x) = ∏ᵢ [tᵢ·xᵢ + (1-tᵢ)·(1-xᵢ)]
     fn eval_eq(&self, point: &[F]) -> F {
         let mut result = F::one();
         for i in 0..self.num_variables {
             let ti = self.eq_point[i];
             let xi = point[i];
-            // ti·xi + (1-ti)·(1-xi) = ti·xi + (1-ti) - (1-ti)·xi
-            //                        = (1-ti) + xi·(2ti - 1)
             result *= (F::one() - ti) + xi * (ti + ti - F::one());
         }
         result
@@ -166,6 +202,8 @@ impl<F: Field> BinaryConstraintPolynomial<F> {
 
     /// Evaluate the full polynomial at a point
     pub fn evaluate(&self, point: &[F]) -> F {
+        use ark_poly::MultilinearExtension;
+        
         // Compute Σᵢ cᵢ·Pᵢ(x)·(1-Pᵢ(x))
         let mut binary_sum = F::zero();
         for (coeff, poly) in &self.constraints {
@@ -179,15 +217,26 @@ impl<F: Field> BinaryConstraintPolynomial<F> {
         // Compute eq_{1,...,1}(x)
         let eq_ones = self.eval_eq_all_ones(point);
         
-        // Return [Σᵢ cᵢ·Pᵢ·(1-Pᵢ)] · eq_t · (1 - eq_{1,...,1})
-        binary_sum * eq_t * (F::one() - eq_ones)
+        // Compute g(x)
+        let g_val = self.eval_g(point);
+        
+        // Return [Σᵢ cᵢ·Pᵢ·(1-Pᵢ)] · eq_t · (1 - eq_{1,...,1}) + α · g
+        binary_sum * eq_t * (F::one() - eq_ones) + self.alpha * g_val
     }
 
     /// Get polynomial info for verifier
     pub fn info(&self) -> PolynomialInfo {
         PolynomialInfo {
             num_variables: self.num_variables,
-            max_multiplicands: 2, // Degree is at most 2n (but we optimize to get lower)
+            max_multiplicands: 2,
         }
+    }
+
+    /// Create new polynomial without g polynomials (α = 0, g = 0)
+    /// This is a convenience method for tests that don't need the g term
+    pub fn new_without_g(num_variables: usize, eq_point: Vec<F>) -> Self {
+        let alpha = F::zero();
+        let g_polys = vec![vec![F::zero(); 5]; num_variables];
+        Self::new(num_variables, eq_point, alpha, g_polys)
     }
 }

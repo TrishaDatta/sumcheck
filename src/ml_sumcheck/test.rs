@@ -1,6 +1,6 @@
 use crate::ml_sumcheck::BinaryConstraintPolynomial;
 use ark_bn254::Fr;
-use ark_ff::{One, Zero};
+use ark_ff::{One, Zero}; 
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::{test_rng, UniformRand};
 use ark_ff::Field;
@@ -15,7 +15,7 @@ fn test_binary_constraint_sumcheck() {
 
     // Create random eq_point
     let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     let mut expected_sum = Fr::zero();
 
     // Add several constraints
@@ -80,7 +80,7 @@ fn test_single_constraint() {
     let nv = 8;
 
     let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     let coefficient = Fr::rand(&mut rng);
     let p = DenseMultilinearExtension::rand(nv, &mut rng);
     
@@ -135,7 +135,7 @@ fn test_boolean_inputs() {
     // Test that P(1-P) = 0 when P ∈ {0,1}
     let nv = 4;
     let eq_point: Vec<Fr> = vec![Fr::zero(); nv];
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     
     // Create a polynomial that evaluates to only 0s and 1s
     let boolean_evals: Vec<Fr> = (0..(1 << nv))
@@ -199,7 +199,7 @@ fn test_multiple_rounds() {
     // Test with different numbers of variables
     for nv in [1, 2, 5, 8, 12] {
         let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-        let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+        let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
         let mut expected_sum = Fr::zero();
 
         // Add random constraints
@@ -261,16 +261,17 @@ fn test_multiple_rounds() {
 fn test_zero_variables_panics() {
     use crate::ml_sumcheck::protocol::IPForMLSumcheck;
     
-    let poly = BinaryConstraintPolynomial::<Fr>::new(0, vec![]);
+    let poly = BinaryConstraintPolynomial::<Fr>::new_without_g(0, vec![]);
     IPForMLSumcheck::prover_init(&poly);
 }
+
 
 #[test]
 #[should_panic(expected = "Polynomial has wrong number of variables")]
 fn test_mismatched_variables_panics() {
     let mut rng = test_rng();
     let eq_point: Vec<Fr> = (0..5).map(|_| Fr::rand(&mut rng)).collect();
-    let mut poly = BinaryConstraintPolynomial::new(5, eq_point);
+    let mut poly = BinaryConstraintPolynomial::new_without_g(5, eq_point);
     let p = DenseMultilinearExtension::rand(6, &mut rng); // Wrong size!
     poly.add_constraint(Fr::one(), p);
 }
@@ -281,7 +282,7 @@ fn test_evaluation_correctness() {
     let nv = 6;
 
     let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     
     // Add constraints
     let c1 = Fr::from(3u64);
@@ -332,7 +333,7 @@ fn test_with_eq_masking() {
     // Create random eq_point
     let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
     
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     let mut expected_sum = Fr::zero();
 
     // Add several constraints
@@ -397,7 +398,7 @@ fn test_eq_masking_zeros_out_all_ones() {
     // Create random eq_point
     let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
     
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     
     // Add a constraint
     let coefficient = Fr::rand(&mut rng);
@@ -424,7 +425,7 @@ fn test_eq_point_at_origin() {
     // Set eq_point to (0,0,...,0) so eq_t(0,...,0) = 1
     let eq_point: Vec<Fr> = vec![Fr::zero(); nv];
     
-    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+    let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
     let mut expected_sum = Fr::zero();
     
     // Add constraint
@@ -486,7 +487,7 @@ fn test_multiple_constraints_with_eq_masking() {
     
     for nv in [3, 5, 10] {
         let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
-        let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone());
+        let mut poly = BinaryConstraintPolynomial::new_without_g(nv, eq_point.clone());
         let mut expected_sum = Fr::zero();
 
         // All-ones point is at index 2^nv - 1
@@ -563,6 +564,93 @@ fn test_multiple_constraints_with_eq_masking() {
         println!("  Expected sum should be 0 due to (1 - eq_{{1,...,1}}) masking: {}", 
                  expected_sum == Fr::zero());
     }
+}
+
+
+#[test]
+fn test_with_g_polynomial() {
+    use crate::ml_sumcheck::MLSumcheck;
+    
+    let mut rng = test_rng();
+    let nv = 4;
+
+    // Create random eq_point
+    let eq_point: Vec<Fr> = (0..nv).map(|_| Fr::rand(&mut rng)).collect();
+    
+    // Create random α
+    let alpha = Fr::rand(&mut rng);
+    
+    // Create random g polynomials (one per variable)
+    let g_polys: Vec<Vec<Fr>> = (0..nv)
+        .map(|_| (0..5).map(|_| Fr::rand(&mut rng)).collect())
+        .collect();
+    
+    let mut poly = BinaryConstraintPolynomial::new(nv, eq_point.clone(), alpha, g_polys.clone());
+    let mut expected_sum = Fr::zero();
+
+    // Add several constraints
+    for _ in 0..3 {
+        let coefficient = Fr::rand(&mut rng);
+        let p = DenseMultilinearExtension::rand(nv, &mut rng);
+        
+        // Compute sum of binary constraint term
+        for b in 0..(1 << nv) {
+            let p_val = p[b];
+            let binary_val = p_val * (Fr::one() - p_val);
+            
+            // Build point from b
+            let mut point = Vec::new();
+            for j in 0..nv {
+                if (b >> j) & 1 == 1 {
+                    point.push(Fr::one());
+                } else {
+                    point.push(Fr::zero());
+                }
+            }
+            
+            // Compute eq_t
+            let mut eq_t = Fr::one();
+            for j in 0..nv {
+                let tj = eq_point[j];
+                let xj = point[j];
+                eq_t *= (Fr::one() - tj) + xj * (tj + tj - Fr::one());
+            }
+            
+            // Compute eq_{1,...,1}
+            let mut eq_ones = Fr::one();
+            for &xj in &point {
+                eq_ones *= xj;
+            }
+            
+            expected_sum += coefficient * binary_val * eq_t * (Fr::one() - eq_ones);
+        }
+        
+        poly.add_constraint(coefficient, p);
+    }
+    
+    // Add α·g term
+    // Σ_{x∈{0,1}ⁿ} α·g(x) = α · Σᵢ 2^(n-1) · [gᵢ(0) + gᵢ(1)]
+    let half_hypercube = Fr::from(1u64 << (nv - 1));
+    for i in 0..nv {
+        let coeffs = &g_polys[i];
+        let g_i_at_0 = coeffs[0]; // r₀
+        let g_i_at_1 = coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3] + coeffs[4]; // r₀ + r₁ + r₂ + r₃ + r₄
+        
+        expected_sum += alpha * half_hypercube * (g_i_at_0 + g_i_at_1);
+    }
+
+    println!("Expected sum with g polynomial: {:?}", expected_sum);
+
+    let poly_info = poly.info();
+    let proof = MLSumcheck::prove(&poly).expect("prove failed");
+    let subclaim = MLSumcheck::verify(&poly_info, expected_sum, &proof)
+        .expect("verification failed");
+
+    assert_eq!(
+        poly.evaluate(&subclaim.point),
+        subclaim.expected_evaluation,
+        "Subclaim verification failed"
+    );
 }
 
 

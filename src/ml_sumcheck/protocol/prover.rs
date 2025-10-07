@@ -16,7 +16,7 @@ pub struct ProverMsg<F: Field> {
     pub(crate) evaluations: Vec<F>,
 }
 
-/// Prover State for binary constraints with eq_t masking
+/// Prover State for binary constraints with eq_t masking and g polynomial
 pub struct ProverState<F: Field> {
     /// sampled randomness given by the verifier
     pub randomness: Vec<F>,
@@ -24,6 +24,10 @@ pub struct ProverState<F: Field> {
     pub constraints: Vec<(F, DenseMultilinearExtension<F>)>,
     /// The eq_t point (original, never modified)
     pub eq_point_original: Vec<F>,
+    /// Coefficient α for g term
+    pub alpha: F,
+    /// Random univariate polynomials g₁, ..., gₙ (coefficients)
+    pub g_polys: Vec<Vec<F>>,
     /// Number of variables
     pub num_vars: usize,
     /// The current round number
@@ -31,7 +35,7 @@ pub struct ProverState<F: Field> {
 }
 
 impl<F: Field> IPForMLSumcheck<F> {
-    /// Initialize the prover for binary constraint polynomial with eq masking
+    /// Initialize the prover for binary constraint polynomial with eq masking and g
     pub fn prover_init(polynomial: &BinaryConstraintPolynomial<F>) -> ProverState<F> {
         if polynomial.num_variables == 0 {
             panic!("Attempt to prove a constant.");
@@ -48,6 +52,8 @@ impl<F: Field> IPForMLSumcheck<F> {
             randomness: Vec::with_capacity(polynomial.num_variables),
             constraints,
             eq_point_original: polynomial.eq_point.clone(),
+            alpha: polynomial.alpha,
+            g_polys: polynomial.g_polys.clone(),
             num_vars: polynomial.num_variables,
             round: 0,
         }
@@ -82,14 +88,9 @@ impl<F: Field> IPForMLSumcheck<F> {
         let i = prover_state.round;
         let nv = prover_state.num_vars;
         
-        // Conservative degree upper bound
-        let remaining_vars = nv - i + 1;
-        // Degree is always 4 for [P(1-P)] * eq_t * (1 - eq_{1,1})
-        // - P(1-P): degree 2
-        // - eq_t: degree 1  
-        // - (1 - eq_{1,1}): degree 1
-        // - Product: 2 * 1 * 1 but we need to multiply, so 2 + 1 + 1 = 4
+        // Degree is 4
         let degree = 4;
+
         #[cfg(not(feature = "parallel"))]
         let zeros = vec![F::zero(); degree + 1];
         #[cfg(feature = "parallel")]
@@ -113,15 +114,12 @@ impl<F: Field> IPForMLSumcheck<F> {
                     let a1 = delta * (one - two * p0);
                     let a2 = -(delta * delta);
 
-                    // Evaluate at X = 0, 1, 2, ...
+                    // Evaluate at X = 0, 1, 2, 3, 4
                     for x in 0..=degree {
                         let x_field = F::from(x as u64);
                         
                         // Binary constraint at X
                         let binary_val = a0 + a1 * x_field + a2 * x_field * x_field;
-                        
-                        // Now compute eq_t and eq_{1,...,1} at (r_1,...,r_{i-1}, X, x_{i+1},...,x_n)
-                        // where x_{i+1},...,x_n are determined by b
                         
                         // eq_t contribution
                         let mut eq_val = one;
@@ -161,10 +159,10 @@ impl<F: Field> IPForMLSumcheck<F> {
                             eq_ones_val *= xj;
                         }
                         
-                        // Full product: binary_val * eq_val * (1 - eq_ones_val)
-                        let val = binary_val * eq_val * (one - eq_ones_val);
+                        // Binary constraint term: binary_val * eq_val * (1 - eq_ones_val)
+                        let binary_term = binary_val * eq_val * (one - eq_ones_val);
                         
-                        sum[x] += *coefficient * val;
+                        sum[x] += *coefficient * binary_term;
                     }
                 }
                 sum
@@ -172,10 +170,10 @@ impl<F: Field> IPForMLSumcheck<F> {
         );
 
         #[cfg(not(feature = "parallel"))]
-        let products_sum = fold_result;
+        let mut products_sum = fold_result;
 
         #[cfg(feature = "parallel")]
-        let products_sum = fold_result.reduce(
+        let mut products_sum = fold_result.reduce(
             || vec![F::zero(); degree + 1],
             |mut overall, sublist| {
                 overall
@@ -185,6 +183,64 @@ impl<F: Field> IPForMLSumcheck<F> {
                 overall
             },
         );
+
+        // Add α·g terms
+        
+        // Contribution from fixed variables (constant term)
+        // Contribution from fixed variables (constant term)
+        let mut fixed_g_sum = F::zero();
+        for j in 0..(i-1) {
+            let rj = prover_state.randomness[j];
+            let coeffs = &prover_state.g_polys[j];
+            let mut g_j_val = coeffs[0];
+            let mut rj_pow = rj;
+            for k in 1..5 {
+                g_j_val += coeffs[k] * rj_pow;
+                rj_pow *= rj;
+            }
+            fixed_g_sum += g_j_val;
+        }
+
+        if i > 1 {
+            let num_all_remaining = F::from(1u64 << (nv - i));  // Changed from (nv - i + 1)
+            let fixed_contribution = prover_state.alpha * fixed_g_sum * num_all_remaining;
+
+            for x in 0..=degree {
+                products_sum[x] += fixed_contribution;
+            }
+        }
+
+        // Contribution from remaining unfixed variables (constant term)
+        if i < nv {
+            let mut remaining_g_sum = F::zero();
+            for j in i..nv {
+                let coeffs = &prover_state.g_polys[j];
+                let g_j_at_0 = coeffs[0];
+                let g_j_at_1 = coeffs[0] + coeffs[1] + coeffs[2] + coeffs[3] + coeffs[4];
+                remaining_g_sum += g_j_at_0 + g_j_at_1;
+            }
+            let num_half_remaining = F::from(1u64 << (nv - i - 1));
+            let remaining_contribution = prover_state.alpha * remaining_g_sum * num_half_remaining;
+            for x in 0..=degree {
+                products_sum[x] += remaining_contribution;
+            }
+        }
+
+        // Contribution from current variable g_{i-1}(X)
+        let g_coeffs = &prover_state.g_polys[i - 1];
+        let num_current_remaining = F::from(1u64 << (nv - i));
+        
+        for x in 0..=degree {
+            let x_field = F::from(x as u64);
+            let mut g_i_val = g_coeffs[0];
+            let mut x_pow = x_field;
+            for j in 1..5 {
+                g_i_val += g_coeffs[j] * x_pow;
+                x_pow *= x_field;
+            }
+            let contribution = prover_state.alpha * num_current_remaining * g_i_val;
+            products_sum[x] += contribution;
+        }
 
         ProverMsg {
             evaluations: products_sum,

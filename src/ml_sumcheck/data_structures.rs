@@ -108,3 +108,86 @@ impl<F: Field> ListOfProductsOfPolynomials<F> {
             .sum()
     }
 }
+
+
+/// Represents a polynomial of the form 
+/// [Σᵢ cᵢ·Pᵢ(1-Pᵢ)] · eq_t(X) · (1 - eq_{1,...,1}(X))
+pub struct BinaryConstraintPolynomial<F: Field> {
+    /// List of (coefficient, polynomial) pairs for the binary constraints
+    pub constraints: Vec<(F, DenseMultilinearExtension<F>)>,
+    /// The point t for eq_t
+    pub eq_point: Vec<F>,
+    /// Number of variables
+    pub num_variables: usize,
+}
+
+impl<F: Field> BinaryConstraintPolynomial<F> {
+    /// Create new polynomial with eq_t evaluation point
+    pub fn new(num_variables: usize, eq_point: Vec<F>) -> Self {
+        if eq_point.len() != num_variables {
+            panic!("eq_point must have same dimension as num_variables");
+        }
+        Self {
+            constraints: Vec::new(),
+            eq_point,
+            num_variables,
+        }
+    }
+
+    /// Add a binary constraint: c · P(1-P)
+    pub fn add_constraint(&mut self, coefficient: F, polynomial: DenseMultilinearExtension<F>) {
+        if polynomial.num_vars != self.num_variables {
+            panic!("Polynomial has wrong number of variables");
+        }
+        self.constraints.push((coefficient, polynomial));
+    }
+
+    /// Evaluate eq_t(x) = ∏ᵢ [tᵢ·xᵢ + (1-tᵢ)·(1-xᵢ)]
+    fn eval_eq(&self, point: &[F]) -> F {
+        let mut result = F::one();
+        for i in 0..self.num_variables {
+            let ti = self.eq_point[i];
+            let xi = point[i];
+            // ti·xi + (1-ti)·(1-xi) = ti·xi + (1-ti) - (1-ti)·xi
+            //                        = (1-ti) + xi·(2ti - 1)
+            result *= (F::one() - ti) + xi * (ti + ti - F::one());
+        }
+        result
+    }
+
+    /// Evaluate eq_{1,...,1}(x) = ∏ᵢ xᵢ
+    fn eval_eq_all_ones(&self, point: &[F]) -> F {
+        let mut result = F::one();
+        for &xi in point {
+            result *= xi;
+        }
+        result
+    }
+
+    /// Evaluate the full polynomial at a point
+    pub fn evaluate(&self, point: &[F]) -> F {
+        // Compute Σᵢ cᵢ·Pᵢ(x)·(1-Pᵢ(x))
+        let mut binary_sum = F::zero();
+        for (coeff, poly) in &self.constraints {
+            let p_val = poly.evaluate(point).unwrap();
+            binary_sum += *coeff * p_val * (F::one() - p_val);
+        }
+        
+        // Compute eq_t(x)
+        let eq_t = self.eval_eq(point);
+        
+        // Compute eq_{1,...,1}(x)
+        let eq_ones = self.eval_eq_all_ones(point);
+        
+        // Return [Σᵢ cᵢ·Pᵢ·(1-Pᵢ)] · eq_t · (1 - eq_{1,...,1})
+        binary_sum * eq_t * (F::one() - eq_ones)
+    }
+
+    /// Get polynomial info for verifier
+    pub fn info(&self) -> PolynomialInfo {
+        PolynomialInfo {
+            num_variables: self.num_variables,
+            max_multiplicands: 2, // Degree is at most 2n (but we optimize to get lower)
+        }
+    }
+}

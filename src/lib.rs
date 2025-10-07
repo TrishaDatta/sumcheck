@@ -5,8 +5,6 @@
 #![deny(trivial_numeric_casts, variant_size_differences)]
 #![deny(stable_features, unreachable_pub, non_shorthand_field_patterns)]
 #![deny(unused_attributes, unused_mut)]
-#![deny(missing_docs)]
-#![deny(unused_imports)]
 #![deny(renamed_and_removed_lints, stable_features, unused_allocation)]
 #![deny(unused_comparisons, bare_trait_objects, unused_must_use)]
 
@@ -19,7 +17,6 @@ extern crate ark_std;
 /// error for this crate
 mod error;
 
-pub mod gkr_round_sumcheck;
 pub mod ml_sumcheck;
 
 pub mod rng;

@@ -23,6 +23,7 @@ ark-poly = { version = "0.4.0", default-features = false }
 hashbrown = { version = "0.15.0" }
 blake2 = { version = "0.10", default-features = false }
 rayon = { version = "1", optional = true }
+ark-bn254 = { version = "0.4", features = ["scalar_field"] }
 
 [dev-dependencies]
 ark-test-curves = { version = "0.4.0", default-features = false, features = ["bls12_381_scalar_field", "bls12_381_curve"] }

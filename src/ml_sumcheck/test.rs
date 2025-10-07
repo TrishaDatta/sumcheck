@@ -10,7 +10,7 @@ use ark_std::rand::RngCore;
 use ark_std::rc::Rc;
 use ark_std::vec::Vec;
 use ark_std::{test_rng, UniformRand};
-use ark_test_curves::bls12_381::Fr;
+use ark_bn254::Fr;
 
 fn random_product<F: Field, R: RngCore>(
     nv: usize,

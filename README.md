@@ -1,3 +1,14 @@
+The relevant added test case is:
+```bash
+cargo test test_with_g_polynomial --release
+```
+
+To run with output times:
+```bash
+cargo test test_with_g_polynomial --release -- --nocapture 
+```
+
+All from original repository README: 
 <h1 align="center">Linear-Time Sumcheck</h1>
 
 <p align="center">
